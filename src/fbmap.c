@@ -75,14 +75,14 @@ void fbmapCamera_read(CameraMap_Struct *cms)
     if (buffer.index < cms->memSize)
     {
         // 解析时间戳
-        cms->timeStamp = 
+        cms->timeStamp =
             buffer.timestamp.tv_sec * 1000 + buffer.timestamp.tv_usec / 1000;
 
         // 得到内存,回调
         if (cms->callback)
             cms->callback(cms, cms->mem[buffer.index].buff, buffer.bytesused);
 
-        // 重新使能该块内存
+        // 投放一个空的视频缓冲区到视频缓冲区输入队列中
         if (ioctl(cms->fd, VIDIOC_QBUF, &buffer) < 0)
         {
             fprintf(stderr, "ioctl VIDIOC_QBUF error (%d)\r\n", errno);
@@ -112,7 +112,7 @@ void fbmapCamera_callback(void *argv)
     fds[0].events = POLLIN;
 #endif
 
-    // 使能各数据块允许接收数据
+    // 投放一个空的视频缓冲区到视频缓冲区输入队列中
     for (count = 0; count < cms->memSize; count++)
     {
         memset(&buffer, 0, sizeof(buffer));
@@ -246,15 +246,19 @@ FileMap_Struct *fileMap_open(char *file, FileMap_Type type, int size)
 }
 
 /*
- *  /dev/videoX设备内存映射,顺便作数据就绪回调
+ *  /dev/videoX设备内存映射,顺便作数据流读取回调
  *  参数:
  *      videoDev: 目标设备,示例"/dev/video0"
+ *      type: 指定数据格式,如:"JPEG" "H264" "MJPG" "BGR3" ...
  *      obj: 私有参数
  *      callback: 数据就绪回调
  *  返回: 返回结构体指针,失败NULL
  */
 CameraMap_Struct *cameraMap_open(
     char *videoDev,
+    char type[4],
+    int width,
+    int height,
     void *obj,
     void (*callback)(CameraMap_Struct *, uint8_t *, int))
 {
@@ -263,11 +267,10 @@ CameraMap_Struct *cameraMap_open(
     int i;
 
     struct v4l2_capability cap = {0};
-    struct v4l2_cropcap cropcap = {0}; // 图像裁剪
-    struct v4l2_crop crop = {0};
     struct v4l2_format fmt = {0};
     struct v4l2_requestbuffers reqBuff = {0};
     struct v4l2_buffer buffer = {0};
+    struct v4l2_fmtdesc fmtdesc = {0};
 
     // 参数检查
     if (!videoDev)
@@ -284,13 +287,13 @@ CameraMap_Struct *cameraMap_open(
         return NULL;
     }
 
-    // 参数检查
+    // 查询视频设备的功能
     if (ioctl(fd, VIDIOC_QUERYCAP, &cap) < 0)
     {
         fprintf(stderr, "ioctl VIDIOC_QUERYCAP error (%d)\r\n", errno);
         return NULL;
     }
-    printf("driver %s, card %s, bus %s \r\n", cap.driver, cap.card, cap.bus_info);
+    // printf("cap: driver %s, card %s, bus %s \r\n", cap.driver, cap.card, cap.bus_info);
 
     // 是否支持录像
     if (!(cap.capabilities & V4L2_CAP_VIDEO_CAPTURE))
@@ -306,22 +309,13 @@ CameraMap_Struct *cameraMap_open(
         return NULL;
     }
 
-    // 裁剪信息
-    cropcap.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    if (ioctl(fd, VIDIOC_CROPCAP, &cropcap) == 0)
+    fmtdesc.index = 0;
+    fmtdesc.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    while (ioctl(fd, VIDIOC_ENUM_FMT, &fmtdesc) == 0)
     {
-        crop.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-        crop.c = cropcap.defrect; /* reset to default */
-        if (ioctl(fd, VIDIOC_S_CROP, &crop) < 0)
-        {
-            fprintf(stderr, "ioctl VIDIOC_S_CROP error (%d)\r\n", errno);
-            // return NULL;
-        }
-    }
-    else
-    {
-        // fprintf(stderr, "ioctl VIDIOC_CROPCAP error (%d)\r\n", errno);
-        // return NULL;
+        fmtdesc.index++;
+        printf("support fmt: %4s, %s \r\n",
+               (char *)&fmtdesc.pixelformat, fmtdesc.description);
     }
 
     // 格式信息
@@ -331,13 +325,34 @@ CameraMap_Struct *cameraMap_open(
         fprintf(stderr, "ioctl VIDIOC_G_FMT error (%d)\r\n", errno);
         return NULL;
     }
-    printf("image %d x %d - type %4s - size %d\r\n",
+    // 设置格式
+    if (type)
+    {
+        fmt.fmt.pix.pixelformat = v4l2_fourcc(type[0], type[1], type[2], type[3]);
+        fmt.fmt.pix.width = width;
+        fmt.fmt.pix.height = height;
+        if (ioctl(fd, VIDIOC_S_FMT, &fmt) < 0)
+        {
+            fprintf(stderr, "ioctl VIDIOC_S_FMT error (%d)\r\n", errno);
+            // return NULL;
+        }
+    }
+    // 再次读取确认
+    memset(&fmt, 0, sizeof(fmt));
+    fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    if (ioctl(fd, VIDIOC_G_FMT, &fmt) < 0)
+    {
+        fprintf(stderr, "ioctl VIDIOC_G_FMT error (%d)\r\n", errno);
+        return NULL;
+    }
+
+    printf("FMT: %d x %d - type %4s - size %d\r\n",
            fmt.fmt.pix.width,
            fmt.fmt.pix.height,
            (char *)&fmt.fmt.pix.pixelformat,
            fmt.fmt.pix.sizeimage);
 
-    // 请求buff信息
+    // 申请视频流buff块信息
     reqBuff.count = 4;
     reqBuff.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     reqBuff.memory = V4L2_MEMORY_MMAP;
@@ -346,9 +361,6 @@ CameraMap_Struct *cameraMap_open(
         fprintf(stderr, "ioctl VIDIOC_REQBUFS error (%d)\r\n", errno);
         return NULL;
     }
-
-    // 内存块(每次缓存图像帧数)
-    printf("reqBuff: count %d\r\n", reqBuff.count);
     if (reqBuff.count < 1)
     {
         fprintf(stderr, "Insufficient reqBuff.count %d\r\n", reqBuff.count);
@@ -357,17 +369,17 @@ CameraMap_Struct *cameraMap_open(
 
     // 参数准备
     cms = (CameraMap_Struct *)calloc(1, sizeof(CameraMap_Struct));
+    cms->fd = fd;
     cms->width = fmt.fmt.pix.width;
     cms->height = fmt.fmt.pix.height;
-    memcpy(cms->format, &fmt.fmt.pix.pixelformat, 4);
     cms->runFlag = 1;
-    cms->fd = fd;
+    memcpy(cms->format, &fmt.fmt.pix.pixelformat, 4);
     cms->memSize = reqBuff.count;
     cms->mem = (CameraMap_Frame *)calloc(reqBuff.count, sizeof(CameraMap_Frame));
     cms->obj = obj;
     cms->callback = callback;
 
-    // 每块信息(每帧图像大小和起始地址,一般是连续的)
+    // 查询已经分配视频流内存块信息(对应每帧图像,大小和起始地址一般是连续的)
     for (i = 0; i < reqBuff.count; i++)
     {
         memset(&buffer, 0, sizeof(buffer));
@@ -381,7 +393,7 @@ CameraMap_Struct *cameraMap_open(
             fprintf(stderr, "ioctl VIDIOC_QUERYBUF error (%d)\r\n", errno);
             return NULL;
         }
-        printf("count %d: len %d, offset %d\r\n", i, buffer.length, buffer.m.offset);
+        // printf("count %d: len %d, offset %d\r\n", i, buffer.length, buffer.m.offset);
 
         cms->mem[i].size = buffer.length;
         cms->mem[i].buff = (uint8_t *)mmap(

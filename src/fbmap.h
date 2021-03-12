@@ -8,7 +8,7 @@
 
 typedef enum
 {
-    FMT_R, // 只读模式得到的mem指针绝对不能写,否则段错误
+    FMT_R = 0, // 只读模式得到的mem指针绝对不能写,否则段错误
     FMT_RW,
     FMT_NEW,
 } FileMap_Type;
@@ -52,15 +52,19 @@ typedef struct CameraMapStruct
 FileMap_Struct *fileMap_open(char *file, FileMap_Type type, int size);
 
 /*
- *  /dev/videoX设备内存映射,顺便作数据就绪回调
+ *  /dev/videoX设备内存映射,顺便作数据流读取回调
  *  参数:
  *      videoDev: 目标设备,示例"/dev/video0"
+ *      type: 指定数据格式,如:"JPEG" "H264" "MJPG" "BGR3" ...
  *      obj: 私有参数
  *      callback: 数据就绪回调
  *  返回: 返回结构体指针,失败NULL
  */
 CameraMap_Struct *cameraMap_open(
     char *videoDev,
+    char type[4],
+    int width,
+    int height,
     void *obj,
     void (*callback)(CameraMap_Struct *, uint8_t *, int));
 

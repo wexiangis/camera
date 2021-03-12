@@ -10,7 +10,7 @@ obj += $(SRC)/main.c
 obj += $(SRC)/fbmap.c
 
 target:
-	$(CC) -Wall -o app $(obj) $(INC) $(CFLAG)
+	$(CC) -Wall -o camera $(obj) $(INC) $(CFLAG)
 
 clean:
-	rm app -rf
+	rm camera -rf
