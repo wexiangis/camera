@@ -142,7 +142,6 @@ int main(int argc, char **argv)
         return -1;
     }
 
-
     // 视频流模式
     if (second)
     {
@@ -150,8 +149,8 @@ int main(int argc, char **argv)
         while(!frameCount)
             usleep(100);
         // 开始计时
-        for (i = 0; i < second * 1000; i += 200)
-            usleep(200000);
+        for (i = 0; i < second; i++)
+            sleep(1);
     }
     // 拍照模式
     else
