@@ -109,13 +109,9 @@ void camera_callback(CameraMap_Struct *cms, uint8_t *mem, int memSize)
         // 拍照模式
         if (second == 0)
         {
-            // 取第二帧,且只写一帧图片
-            if (frameCount == 1)
-            {
-                write(fd, mem, memSize);
-                close(fd);
-                fd = 0;
-            }
+            write(fd, mem, memSize);
+            close(fd);
+            fd = 0;
         }
         else
             write(fd, mem, memSize);
@@ -161,7 +157,7 @@ int main(int argc, char **argv)
     else
     {
         // 等待开始
-        while(frameCount < 2)
+        while(!frameCount)
             usleep(100);
     }
 
